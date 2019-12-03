@@ -9,61 +9,68 @@
 
 (setf lparallel:*kernel* (lparallel:make-kernel 4))
 
-(defclass front-cache ()
-	((sync-queue
-		:initarg :sync-queue
-		:accessor :sync-q
-		:initform (error "you didn't supply an initial value for slot sync-queue"))
-	 (req-queue
+(defclass cache-entry ()
+	((resp-queue
+		:initarg :resp-queue
+		:accessor :resp-q
+		:initform (error "you didn't supply an initial value for slot resp-queue"))
+	 (entry-key 
+		:initarg :entry-key
+		:accessor :key
+		:initform (error "you didn't supply an initial value for slot entry-key"))
+	 (entry-value
+		:initarg :entry-value
+		:accessor :value
+		:initform (error "you didn't supply an initial value for slot entry-value"))))
+	
+(defclass central-cache ()
+	((req-queue
 		:initarg :req-queue
 		:accessor :req-q
 		:initform (error "you didn't supply an initial value for slot rec-queue"))
-	 (notify-queue
-		:initarg :notify-queue
-		:accessor :not-q
-		:initform (error "you didn't supply an initial value for slot rnot-queue"))
 	 (cache-data
 		:initarg :cache
 		:accessor :get-cache
-		:initform '())))
-
-
-(defun blip ()
-		'test)
+		:initform (make-hash-table))))
 
 
 (defgeneric start-cache (cache))
 
-(defmethod start-cache ((cache front-cache))
+(defmethod start-cache ((cache central-cache))
 	(let ((go-on t)
-				(sync-channel (lparallel:make-channel))
-				(req-channel (lparallel:make-channel))
-				(sync (:sync-q cache))
-				(cache-data (:get-cache cache)))
+				(cache-data (:get-cache cache))
+				(req-queue (:req-q cache)))
 		(loop
 			 while (eql go-on t)
-			 do (when (not (queue-empty-p sync))
-					 (let ((sync-data (pop-queue sync)))
-						 (cond ((eq sync-data 'quit)
+			 do (when (not (queue-empty-p req-queue))
+					 (let ((req-data (pop-queue req-queue)))
+						 (cond ((eq req-data 'quit)
 										(setf go-on nil))
-									 ((eq sync-data 'flush)
+									 ((eq req-data 'flush)
 										(format t "Flush ~A~%" (:get-cache cache)))
-									 (t (setf (:get-cache cache) (cons sync-data (:get-cache cache))))))))))
+									 ((typep req-data 'cache-entry)
+										(multiple-value-bind (val found)
+												(gethash (:key req-data) cache-data)
+											(if found
+													(progn
+														(push-queue val (:resp-q req-data))
+														(format t "Found ~A~%" (:key req-data)))
+													(format t "Not found ~A~%" (:key req-data)))))
+									 (t (format t "Not a known request ~A~%" req-data))))))))
 				 
 				 
 				 
 (defun test-sync ()
-	(let ((sync-queue (make-queue))
-				(req-queue (make-queue))
-				(not-queue (make-queue))
+	(let ((req-queue (make-queue))
+				(entry1-queue (make-queue))
 				(channel (make-channel)))
-		(let ((front-cache (make-instance 'front-cache :sync-queue sync-queue :req-queue req-queue :notify-queue not-queue)))
-			(submit-task channel (lambda () (start-cache front-cache)))
-			(push-queue 'test1 sync-queue)
-			(push-queue 'test2 sync-queue)
-			(push-queue 'test3 sync-queue)
-			(push-queue 'flush sync-queue)
-			(push-queue 'quit sync-queue))))
+		(let ((central-cache (make-instance 'central-cache :req-queue req-queue))
+					(entry1 (make-instance 'cache-entry :entry-key "Bla" :entry-value "BlaVal" :resp-queue entry1-queue)))
+			(setf (gethash "Bla" (:get-cache central-cache)) "BlaValue")
+			(submit-task channel (lambda () (start-cache central-cache)))
+			(push-queue entry1 req-queue)
+			(format t "Resp val ~A" (pop-queue entry1-queue))
+			(push-queue 'quit req-queue))))
 		
 				 
 		 
