@@ -180,27 +180,28 @@
 		(end-kernel :wait t)))
 
 (defun test ()
-	(if (not *central-cache*)
+	(progn
+		(when (not *central-cache*)
 			(progn
 				(setup-cache)
 				(start-cache *central-cache* (make-channel))
-				(sleep 1))
+				(sleep 1)))
+		(when (not *clients*)
 			(progn
-				(when (not *clients*)
-					(progn
-						(loop for x below 4
-							 do (setup-client (:req-q *central-cache*)))
-						(loop for cl in *clients*
-							 do (start-client cl (make-channel))
-								 (format t "Client started ~A~%" cl))))
-				(loop for i below 10
-					 do
-						 (let* ((key (random 99))
-										(client-num (random 4))
-										(client (nth client-num *clients*))
-										(entry (make-instance 'cache-entry :entry-key key :entry-value (* key 2) :entry-client-id (:client-id client))))
-							 ;(format t "pushing to client ~A ~A~%" client entry)
-							 (push-queue entry (:client-req-q client)))))))
+				(loop for x below 4
+					 do (setup-client (:req-q *central-cache*)))
+				(loop for cl in *clients*
+					 do (start-client cl (make-channel))
+						 (format t "Client started ~A~%" cl))
+						(sleep 1)))
+		(loop for i below 10
+			 do
+				 (let* ((key (random 99))
+								(client-num (random 4))
+								(client (nth client-num *clients*))
+								(entry (make-instance 'cache-entry :entry-key key :entry-value (* key 2) :entry-client-id (:client-id client))))
+																				;(format t "pushing to client ~A ~A~%" client entry)
+					 (push-queue entry (:client-req-q client))))))
 	
 	
 			
