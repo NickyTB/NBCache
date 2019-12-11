@@ -8,12 +8,17 @@
 
 (defparameter *db* '())
 
-(defun init-db ()
-	(setf *db* (loop for i from 0 below 1000
-			 collect (cons i (* i 2)))))
+(defparameter *clients* '())
 
+(defparameter *central-cache* nil)
 
-(setf lparallel:*kernel* (lparallel:make-kernel 4))
+(defparameter *numb-kernels* 4)
+
+(defun init ()
+	(progn
+		(setf *db* (loop for i from 0 below 1000
+									collect (cons i (* i 2))))
+		(setf lparallel:*kernel* (lparallel:make-kernel *numb-kernels*))))
 
 (defclass client-quit ()
 	((id 
@@ -43,7 +48,11 @@
 	 (req-queue
 		:initarg :client-req-queue
 		:accessor :client-req-q
-		:initform (error "you didn't supply an initial value for slot rec-queue"))
+		:initform (error "you didn't supply an initial value for slot req-queue"))
+	 (cache-req-queue
+		:initarg :cache-req-queue
+		:accessor :cache-req-q
+		:initform (error "you didn't supply an initial value for slot cache-req-queue"))
 	 (resp-queue
 		:initarg :resp-queue
 		:accessor :resp-q
@@ -68,76 +77,130 @@
 				(eq id (:client-id client))
 				nil)))
 
-(defgeneric start-client (client))
+(defgeneric start-client (client channel))
 
-(defmethod start-client ((client front-client))
-	)
-(defgeneric start-cache (cache))
+(defmethod start-client ((client front-client) channel)
+	(submit-task
+	 channel
+	 (lambda ()
+		 (let ((go-on t)
+					 (req-queue (:client-req-q client))
+					 (cache-queue (:cache-req-q client)))
+			 (loop
+					while (eql go-on t)
+					do (when (not (queue-empty-p req-queue))
+							 (let ((req-data (pop-queue req-queue)))
+								 (cond
+									 ((eq req-data 'quit)
+										(setf go-on nil)
+										(let ((client-quit (make-instance 'client-quit :client-quit-id (:client-id client))))
+											(push-queue client-quit cache-queue)))
+									 (t
+										(push-queue req-data cache-queue))))))))))
+							 
+(defgeneric start-cache (cache channel))
 
-(defmethod start-cache ((cache central-cache))
-	(let ((go-on t)
-				(cache-data (:get-cache cache))
-				(req-queue (:req-q cache))
-				(clients (make-array *max-clients* :element-type 'front-client))
-				(index 0))
-		(loop
-			 while (eql go-on t)
-			 do (when (not (queue-empty-p req-queue))
-						(let ((req-data (pop-queue req-queue)))
-						 (cond ((eq req-data 'quit)
-										(setf go-on nil))
-									 ((eq req-data 'flush)
-										(format t "Flush ~A~%" (:get-cache cache)))
-									 ((typep req-data 'client-quit)
-										(let ((client-pred (get-client (:client-quit-id req-data))))
-											(remove-if client-pred clients)))
-									 ((typep req-data 'front-client)
-										(let* ((client-pred (is-client-pred req-data))
-													 (client (find-if client-pred clients)))
-											(when (not client)
-												(progn
-													(setf (aref clients index) req-data)
-													(1+ index)))))
-									 ((typep req-data 'cache-entry)
-										(if (typep (aref clients 0) 'front-client)
-												(let ((client-p (get-client (:entry-client-id req-data))))											
-													(let ((client (find-if client-p clients)))
-														(if client
-																(multiple-value-bind (val found)
-																		(gethash (:key req-data) cache-data)
-																	(if found
-																			(progn
-																				(push-queue val (:resp-q client))
-																				(format t "Found ~A~%" (:key req-data)))
-																			(error "Not found ~A~%" (:key req-data))))
-																(error "Client not registered. Id: ~A ~A ~A" (:entry-client-id req-data) clients (:client-id (aref  clients 0))))))
-												(error "No clients registered. ~A" clients)))
-										(t (error "Not a known request ~A~%" req-data))))))))
-	
-				 
-				 
-(defun test-sync ()
-	(let ((req-queue (make-queue))
-				(channel (make-channel)))
-		(let* ((central-cache (make-instance 'central-cache :req-queue req-queue))
-					 (client-id (gensym))
-					 (client-id1 (gensym))
-					 (entry1 (make-instance 'cache-entry :entry-key "Bla" :entry-value "BlaVal" :entry-client-id client-id))
-					 (client (make-instance 'front-client :client-id client-id :resp-queue (make-queue) :client-req-queue req-queue))
-					 (client1 (make-instance 'front-client :client-id client-id1 :resp-queue (make-queue) :client-req-queue req-queue))
-					 (client-quit (make-instance 'client-quit :client-quit-id client-id)))
-			
-			(setf (gethash "Bla" (:get-cache central-cache)) "BlaValue")
-			(submit-task channel (lambda () (start-cache central-cache)))
-			(push-queue client req-queue)
-			(push-queue entry1 req-queue)
-			(push-queue entry1 req-queue)
-			(format t "Resp val ~A" (pop-queue (:resp-q client)))
-			(push-queue client-quit req-queue)
-			(push-queue 'quit req-queue))))
-		
+(defmethod start-cache ((cache central-cache) channel)
+	(submit-task
+	 channel
+	 (lambda ()
+		 (let ((go-on t)
+					 (cache-data (:get-cache cache))
+					 (req-queue (:req-q cache))
+					 (clients (make-array *max-clients* :element-type 'front-client))
+					 (index 0))
+			 (loop
+					while (eql go-on t)
+					do (when (not (queue-empty-p req-queue))
+							 (let ((req-data (pop-queue req-queue)))
+								 (cond ((eq req-data 'quit)
+												(setf go-on nil))
+											 ((eq req-data 'flush)
+												(format t "Flush ~A~%" (:get-cache cache)))
+											 ((typep req-data 'client-quit)
+												(let ((client-pred (get-client (:client-quit-id req-data))))
+													(remove-if client-pred clients)))
+											 ((typep req-data 'front-client)
+												(let* ((client-pred (is-client-pred req-data))
+															 (client (find-if client-pred clients)))
+													(when (not client)
+														(progn
+															(format t "Client registered ~A~%" req-data)
+															(setf (aref clients index) req-data)
+															(format t "Clients reged ~A~%" clients)
+															(setf index (1+ index))))))
+											 ((typep req-data 'cache-entry)
+												(if (typep (aref clients 0) 'front-client)
+														(let ((client-p (get-client (:entry-client-id req-data))))											
+															(let ((client (find-if client-p clients)))
+																(if client
+																		(let ((key (:key req-data)))
+																			(multiple-value-bind (val found)
+																					(gethash key cache-data)
+																				(if found
+																						(progn
+																							(push-queue val (:resp-q client))
+																							(format t "Found in cache ~A~%" (:key req-data)))
+																						(let ((db-val (assoc key *db* :test #'=)))
+																							(if db-val
+																									(progn
+																										(setf (gethash key cache-data) db-val)
+																										(format t "Key found in db, ~A~%" key))
+																									(error "Key not found in db ~A" key))))))  
+																		(error "Client not registered. Id: ~A ~A ~A" (:entry-client-id req-data) clients (:client-id (aref  clients 0))))))
+														(error "No clients registered. ~A" clients)))
+											 (t (error "Not a known request ~A~%" req-data))))))))))
+
+
+
+(defun setup-client (cache-queue)
+	(if (= (length *clients*) *numb-kernels*)
+			(format t "Number of worker threads is maxed out. Number of clients: ~A~%" (length *clients*))
+			(let ((client (make-instance 'front-client
+																		:client-id (gensym)
+																		:resp-queue (make-queue)
+																		:cache-req-queue cache-queue
+																		:client-req-queue (make-queue))))
+				(push-queue client cache-queue)
+				(setf *clients* (cons client *clients*))
+				client)))
+
+(defun setup-cache ()
+	(setf *central-cache* (make-instance 'central-cache :req-queue (make-queue))))
 				 
 		 
+(defun shutdown ()
+	(progn
+		(loop for client in *clients*
+			 do
+				 (let ((client-queue  (:resp-q client))
+							 (client-quit (make-instance 'client-quit :client-quit-id (:client-id client))))
+					 (push-queue client-quit client-queue)))
+		(push-queue 'quit (:req-q *central-cache*)) 
+		(end-kernel :wait t)))
+
+(defun test ()
+	(if (not *central-cache*)
+			(progn
+				(setup-cache)
+				(start-cache *central-cache* (make-channel))
+				(sleep 1))
+			(progn
+				(when (not *clients*)
+					(progn
+						(loop for x below 4
+							 do (setup-client (:req-q *central-cache*)))
+						(loop for cl in *clients*
+							 do (start-client cl (make-channel))
+								 (format t "Client started ~A~%" cl))))
+				(loop for i below 10
+					 do
+						 (let* ((key (random 99))
+										(client-num (random 4))
+										(client (nth client-num *clients*))
+										(entry (make-instance 'cache-entry :entry-key key :entry-value (* key 2) :entry-client-id (:client-id client))))
+							 ;(format t "pushing to client ~A ~A~%" client entry)
+							 (push-queue entry (:client-req-q client)))))))
 	
-
-
+	
+			
