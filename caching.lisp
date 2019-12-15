@@ -102,54 +102,54 @@
 
 (defmethod start-cache ((cache central-cache) channel)
 	(submit-task
-	 channel
-	 (lambda ()
-		 (let ((go-on t)
-					 (cache-data (:get-cache cache))
-					 (req-queue (:req-q cache))
-					 (clients (make-array *max-clients* :element-type 'front-client))
-					 (index 0))
-			 (loop
-					while (eql go-on t)
-					do (when (not (queue-empty-p req-queue))
-							 (let ((req-data (pop-queue req-queue)))
-								 (cond ((eq req-data 'quit)
-												(setf go-on nil))
-											 ((eq req-data 'flush)
-												(format t "Flush ~A~%" (:get-cache cache)))
-											 ((typep req-data 'client-quit)
-												(let ((client-pred (get-client (:client-quit-id req-data))))
-													(remove-if client-pred clients)))
-											 ((typep req-data 'front-client)
-												(let* ((client-pred (is-client-pred req-data))
-															 (client (find-if client-pred clients)))
-													(when (not client)
-														(progn
-															(format t "Client registered ~A~%" req-data)
-															(setf (aref clients index) req-data)
-															(format t "Clients reged ~A~%" clients)
-															(setf index (1+ index))))))
-											 ((typep req-data 'cache-entry)
-												(if (typep (aref clients 0) 'front-client)
-														(let ((client-p (get-client (:entry-client-id req-data))))											
-															(let ((client (find-if client-p clients)))
-																(if client
-																		(let ((key (:key req-data)))
-																			(multiple-value-bind (val found)
-																					(gethash key cache-data)
-																				(if found
-																						(progn
-																							(push-queue val (:resp-q client))
-																							(format t "Found in cache ~A~%" (:key req-data)))
-																						(let ((db-val (assoc key *db* :test #'=)))
-																							(if db-val
-																									(progn
-																										(setf (gethash key cache-data) db-val)
-																										(format t "Key found in db, ~A~%" key))
-																									(error "Key not found in db ~A" key))))))  
-																		(error "Client not registered. Id: ~A ~A ~A" (:entry-client-id req-data) clients (:client-id (aref  clients 0))))))
-														(error "No clients registered. ~A" clients)))
-											 (t (error "Not a known request ~A~%" req-data))))))))))
+		 channel
+		 (lambda ()
+			 (let ((go-on t)
+						 (cache-data (:get-cache cache))
+						 (req-queue (:req-q cache))
+						 (clients (make-array *max-clients* :element-type 'front-client))
+						 (index 0))
+				 (loop
+						while (eql go-on t)
+						do (when (not (queue-empty-p req-queue))
+								 (let ((req-data (pop-queue req-queue)))
+									 (cond ((eq req-data 'quit)
+													(setf go-on nil))
+												 ((eq req-data 'flush)
+													(format t "Flush ~A~%" (:get-cache cache)))
+												 ((typep req-data 'client-quit)
+													(let ((client-pred (get-client (:client-quit-id req-data))))
+														(remove-if client-pred clients)))
+												 ((typep req-data 'front-client)
+													(let* ((client-pred (is-client-pred req-data))
+																 (client (find-if client-pred clients)))
+														(when (not client)
+															(progn
+																(format t "Client registered ~A~%" req-data)
+																(setf (aref clients index) req-data)
+																(format t "Clients reged ~A~%" clients)
+																(setf index (1+ index))))))
+												 ((typep req-data 'cache-entry)
+													(if (typep (aref clients 0) 'front-client)
+															(let ((client-p (get-client (:entry-client-id req-data))))											
+																(let ((client (find-if client-p clients)))
+																	(if client
+																			(let ((key (:key req-data)))
+																				(multiple-value-bind (val found)
+																						(gethash key cache-data)
+																					(if found
+																							(progn
+																								(push-queue val (:resp-q client))
+																								(format t "Found in cache ~A~%" (:key req-data)))
+																							(let ((db-val (assoc key *db* :test #'=)))
+																								(if db-val
+																										(progn
+																											(setf (gethash key cache-data) db-val)
+																											(format t "Key found in db, ~A~%" key))
+																										(error "Key not found in db ~A" key))))))  
+																			(error "Client not registered. Id: ~A ~A ~A" (:entry-client-id req-data) clients (:client-id (aref  clients 0))))))
+															(error "No clients registered. ~A" clients)))
+												 (t (error "Not a known request ~A~%" req-data))))))))))
 
 
 
@@ -166,7 +166,9 @@
 				client)))
 
 (defun setup-cache ()
-	(setf *central-cache* (make-instance 'central-cache :req-queue (make-queue))))
+	(progn
+		(init)
+		(setf *central-cache* (make-instance 'central-cache :req-queue (make-queue)))))
 				 
 		 
 (defun shutdown ()
