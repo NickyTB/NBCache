@@ -209,16 +209,14 @@
 
 
 (defun setup-client (cache-queue)
-	(if (= (length *clients*) *numb-kernels*)
-			(format t "Number of worker threads is maxed out. Number of clients: ~A~%" (length *clients*))
-			(let ((client (make-instance 'front-client
-																		:client-id (gensym)
-																		:resp-queue (make-queue)
-																		:cache-req-queue cache-queue
-																		:client-req-queue (make-queue))))
-				(push-queue client cache-queue)
+	(let ((client (make-instance 'front-client
+															 :client-id (gensym)
+															 :resp-queue (make-queue)
+															 :cache-req-queue cache-queue
+															 :client-req-queue (make-queue))))
+		(push-queue client cache-queue)
 				(setf *clients* (cons client *clients*))
-				client)))
+				client))
 
 (defun setup-cache ()
 	(progn
@@ -247,7 +245,7 @@
 					(setup-cache)
 					(start-cache *central-cache* (make-channel) log-queue)
 					(sleep 1)
-					(loop for x below 4
+					(loop for x below 22
 						 do (setup-client (:req-q *central-cache*)))
 					(loop for cl in *clients*
 						 do (start-client cl (make-channel) log-queue)
