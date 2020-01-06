@@ -81,9 +81,8 @@
 
 (defun get-client (id)
 	(lambda (client)
-		(if (typep client 'front-client)
-				(eq id (:client-id client))
-				nil)))
+		(eq id (:client-id client))))
+	
 
 (defun db-update (db key value)
   (let ((cell (assoc key db :test #'=)))
@@ -110,6 +109,7 @@
 										 ((eq req-data 'quit)
 											(setf go-on nil)
 											(let ((client-quit (make-instance 'client-quit :client-quit-id (:client-id client))))
+												(push-queue (format nil "CLient quit ~A from cache req queue" client) log-queue)
 												(push-queue client-quit cache-queue)))
 										 (t
 											(push-queue req-data cache-queue)))))
@@ -117,7 +117,10 @@
 								 (let ((resp-data (pop-queue resp-queue)))
 									 (cond
 										 ((eq resp-data 'quit)
-											(setf go-on nil))
+											(setf go-on nil)
+											(let ((client-quit (make-instance 'client-quit :client-quit-id (:client-id client))))
+												(push-queue (format nil "CLient quit ~A from cache resp queue" client) log-queue)
+												(push-queue client-quit cache-queue)))
 										 (t 
 											(push-queue (format nil "CLient got ~A from cache" resp-data) log-queue)))))))))))
 
@@ -174,9 +177,7 @@
 		 (lambda ()
 			 (let ((go-on t)
 						 (cache-data (:get-cache cache))
-						 (req-queue (:req-q cache))
-						 (clients (make-array *max-clients* :element-type 'front-client))
-						 (index 0))
+						 (req-queue (:req-q cache)))
 				 (loop
 						while (eql go-on t)
 						do (when (not (queue-empty-p req-queue))
@@ -187,23 +188,23 @@
 													(push-queue (format nil "Flush ~A" (:get-cache cache)) log-queue))
 												 ((typep req-data 'client-quit)
 													(let ((client-pred (get-client (:client-quit-id req-data))))
-														(remove-if client-pred clients)))
+														(push-queue (format nil "Remove client ~A~A" req-data (:client-quit-id req-data)) log-queue)
+														(setf *clients* (remove-if client-pred *clients*))))
 												 ((typep req-data 'front-client)
 													(let* ((client-pred (is-client-pred req-data))
-																 (client (find-if client-pred clients)))
+																 (client (find-if client-pred *clients*)))
 														(when (not client)
 															(progn
 																(push-queue (format nil "Client registered ~A" req-data) log-queue)
-																(setf (aref clients index) req-data)
-																(setf index (1+ index))))))
+																(cons req-data *clients*)))))
 												 ((typep req-data 'cache-entry)
-													(if (typep (aref clients 0) 'front-client)
+													(if *clients*
 															(let ((client-p (get-client (:entry-client-id req-data))))											
-																(let ((client (find-if client-p clients)))
+																(let ((client (find-if client-p *clients*)))
 																	(if client
 																			(handle-client-req req-data client cache-data log-queue)
-																			(error "Client not registered. Id: ~A ~A ~A" (:entry-client-id req-data) clients (:client-id (aref  clients 0))))))
-															(error "No clients registered. ~A" clients)))
+																			(error "Client not registered. Id: ~A ~A" (:entry-client-id req-data) *clients*))))
+															(error "No clients registered. ~A" *clients*)))
 												 (t (error "Not a known request ~A~%" req-data))))))))))
 
 
@@ -228,10 +229,9 @@
 	(progn
 		(loop for client in *clients*
 			 do
-				 (let ((client-queue  (:resp-q client))
-							 (client-quit (make-instance 'client-quit :client-quit-id (:client-id client))))
-					 (push-queue client-quit client-queue)))
-		(push-queue 'quit (:req-q *central-cache*)) 
+				 (push-queue 'quit (:resp-q client)))
+		(sleep 2)
+		(push-queue 'quit (:req-q *central-cache*))
 		(end-kernel :wait t)))
 
 
@@ -260,7 +260,7 @@
 										(client (nth client-num *clients*))
 										(entry (make-instance 'get-entry :entry-key key :entry-value (* key 2) :entry-client-id (:client-id client))))
 							 (push-queue entry (:client-req-q client))))
-				(loop for i below 2
+				(loop for i from 0 below 10
 					 do
 						 (let* ((key (random 20))
 										(client-num (random 4))
