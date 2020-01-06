@@ -232,7 +232,8 @@
 				 (push-queue 'quit (:resp-q client)))
 		(sleep 2)
 		(push-queue 'quit (:req-q *central-cache*))
-		(end-kernel :wait t)))
+		(end-kernel :wait t)
+		(setf *setup-done* nil)))
 
 
 
