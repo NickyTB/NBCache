@@ -16,11 +16,12 @@
 
 (defparameter *numb-kernels* 8)
 
+
 (defun init ()
 	(progn
-		(setf *db* (loop for i from 0 below 1000
+		(setf *db* (loop for i from 0 below 10
 									collect (cons i (* i 2))))
-		(setf lparallel:*kernel* (lparallel:make-kernel *numb-kernels*))))
+		(setf lparallel:*kernel* (lparallel:make-kernel *numb-kernels*)))) 
 
 (defclass client-quit ()
 	((id 
@@ -233,8 +234,16 @@
 		(sleep 2)
 		(push-queue 'quit (:req-q *central-cache*))
 		(end-kernel :wait t)
-		(setf *setup-done* nil)))
+		(setf *setup-done* nil)
+		(setf *db* nil)))
 
+(defun send-response-get (key &key (client nil))
+	(let ((entry (make-instance 'get-entry :entry-key key :entry-value nil :entry-client-id (:client-id client))))
+		(push-queue entry (:client-req-q client))))
+
+(defun send-response-update (key value &key (client nil))
+	(let ((entry (make-instance 'update-entry :entry-key key :entry-value value :entry-client-id (:client-id client))))
+		(push-queue entry (:client-req-q client))))
 
 
 (defun test ()
@@ -246,22 +255,21 @@
 					(setup-cache)
 					(start-cache *central-cache* (make-channel) log-queue)
 					(sleep 1)
-					(loop for x below 22
+					(loop for x below 8
 						 do (setup-client (:req-q *central-cache*)))
 					(loop for cl in *clients*
 						 do (start-client cl (make-channel) log-queue)
 							 (format t "Client started ~A~%" cl))
-					(setf *setup-done* t)
-					(sleep 1)))
+					(setf *setup-done* t)))
 			(progn
-				(loop for i below 20
+				(loop for i below 10
 					 do
-						 (let* ((key (random 20))
+						 (let* ((key (random (length *db*)))
 										(client-num (random 4))
 										(client (nth client-num *clients*))
 										(entry (make-instance 'get-entry :entry-key key :entry-value (* key 2) :entry-client-id (:client-id client))))
 							 (push-queue entry (:client-req-q client))))
-				(loop for i from 0 below 10
+				(loop for i from 0 below 5
 					 do
 						 (let* ((key (random 20))
 										(client-num (random 4))
