@@ -94,6 +94,8 @@
 
 (defgeneric start-client (client log-queue))
 
+(defgeneric start-client1 (client log-queue))
+
 
 (defmethod start-client ((client front-client) log-queue)
 	(let ((resp-queue (:resp-q client))
@@ -115,7 +117,7 @@
 										 (push-queue client-quit cache-queue)))
 									(t
 									 (progn
-										 (push-queue (format nil "CLient req ~A from req queue" req-data) log-queue)
+										 (push-queue (format nil "CLient req ~A from req queue. Client: ~A" req-data (:client-id client)) log-queue)
 										 (push-queue req-data cache-queue)))))))))
 		(submit-task
 		 (make-channel)
@@ -132,7 +134,45 @@
 										 (push-queue (format nil "CLient quit ~A from cache resp queue" client) log-queue)
 										 (push-queue client-quit cache-queue)))
 									(t 
-									 (push-queue (format nil "CLient got ~A from cache" resp-data) log-queue))))))))))
+									 (push-queue (format nil "CLient got ~A from cache. Client ~A" resp-data (:client-id client)) log-queue))))))))))
+
+
+(defmethod start-client1 ((client front-client) log-queue)
+	(submit-task
+	 (make-channel)
+	 (lambda ()
+		 (let* ((go-on t)
+						(local-client client)
+						(req-q (:client-req-q local-client))
+						(resp-q (:resp-q local-client))
+						(cache-queue (:cache-req-q local-client)))
+			 (loop
+					while (eql go-on t)
+					do
+						(with-locked-queue req-q
+							(when (not (queue-empty-p req-q))
+								(let ((req-data (pop-queue req-q)))
+									(cond
+										((eq req-data 'quit)
+										 (setf go-on nil)
+										 (let ((client-quit (make-instance 'client-quit :client-quit-id (:client-id client))))
+											 (push-queue (format nil "CLient quit ~A from cache req queue" client) log-queue)
+											 (push-queue client-quit cache-queue)))
+										(t
+										 (progn
+											 (push-queue (format nil "CLient req ~A from req queue" req-data) log-queue)
+											 (push-queue req-data cache-queue)))))))
+						(with-locked-queue resp-q
+							(when (not (queue-empty-p resp-q)))
+							(let ((resp-data (pop-queue resp-q)))
+								(cond
+									((eq resp-data 'quit)
+									 (setf go-on nil)
+									 (let ((client-quit (make-instance 'client-quit :client-quit-id (:client-id client))))
+										 (push-queue (format nil "CLient quit ~A from cache resp queue" client) log-queue)
+										 (push-queue client-quit cache-queue)))
+									(t 
+									 (push-queue (format nil "CLient got ~A from cache. Client: ~A " resp-data (:client-id local-client)) log-queue))))))))))
 
 (defun start-logger (log-queue)
 	(let ((standard-out *standard-output*))
@@ -145,6 +185,20 @@
 										(rec))))
 				 (rec))))))
 
+
+(defun start-logger1 (log-queue)
+	(let ((standard-out *standard-output*))
+		(submit-task
+		 (make-channel)
+		 (lambda ()
+			 (let ((go-on t))
+				 (loop
+						while (eql go-on t)
+						do
+							(let ((logg-mess (pop-queue log-queue)))
+								(format standard-out "LOG: ~A~%" logg-mess))))))))
+							
+
 (defgeneric handle-client-req (req client cache-data log-queue))
 
 (defmethod handle-client-req ((req get-entry) client cache-data log-queue)
@@ -154,13 +208,13 @@
 			(if found
 					(progn
 						(push-queue val (:resp-q client))
-						(push-queue (format nil "Found in cache key: ~A val: ~A" key val) log-queue))
+						(push-queue (format nil "Found in cache key: ~A val: ~A Client ~A" key val (:client-id client)) log-queue))
 					(let ((db-val (assoc key *db* :test #'=)))
 						(if db-val
 								(progn
 									(push-queue db-val (:resp-q client))
 									(setf (gethash key cache-data) db-val)
-									(push-queue (format nil "Key found in db, Key: ~A Val: ~A" key db-val) log-queue))
+									(push-queue (format nil "Key found in db, Key: ~A Val: ~A Client: ~A" key db-val (:client-id client)) log-queue))
 								(error "Key not found in db ~A" key)))))))
 
 (defmethod handle-client-req ((req update-entry) client cache-data log-queue)
@@ -202,10 +256,10 @@
 												 (setf *clients* (remove-if client-pred *clients*))))
 											((typep req-data 'front-client)
 											 (let* ((client-pred (is-client-pred req-data))
-																 (client (find-if client-pred *clients*)))
+															(client (find-if client-pred *clients*)))
 												 (when (not client)
 													 (progn
-														 (push-queue (format nil "Client registered ~A" req-data) log-queue)
+														 (push-queue (format nil "Client registered ~A CLientId: ~A" req-data (:client-id req-data)) log-queue)
 														 (cons req-data *clients*)))))
 											((typep req-data 'cache-entry)
 											 (if *clients*
@@ -242,7 +296,7 @@
 				 (push-queue 'quit (:resp-q client)))
 		(sleep 2)
 		(push-queue 'quit (:req-q *central-cache*))
-		(end-kernel :wait t)
+		(end-kernel :wait nil)
 		(setf *setup-done* nil)
 		(setf *db* nil)))
 
@@ -258,20 +312,20 @@
 (defun test ()
 	(if (not *setup-done*)
 			(let ((log-queue (make-queue)))
-				(start-logger log-queue)
+				(start-logger1 log-queue)
 				(progn
 					(sleep 1)
 					(setup-cache)
 					(start-cache *central-cache* (make-channel) log-queue)
 					(sleep 1)
-					(loop for x below 8
+					(loop for x below 4
 						 do (setup-client (:req-q *central-cache*)))
 					(loop for cl in *clients*
 						 do (start-client cl log-queue)
 							 (format t "Client started ~A~%" cl))
 					(setf *setup-done* t)))
 			(progn
-				(loop for i from 0 below 10
+				(loop for i from 0 below 4
 					 do
 						 (let* ((key (random (length *db*)))
 										(client-num (random 4))
@@ -280,7 +334,7 @@
 							 (push-queue entry (:client-req-q client))))
 				(loop for i from 0 below 5
 					 do
-						 (let* ((key (random 10))
+						 (let* ((key (random (length *db*)))
 										(client-num (random 4))
 										(client (nth client-num *clients*))
 										(entry (make-instance 'update-entry :entry-key key :entry-value (* key 2) :entry-client-id (:client-id client))))
