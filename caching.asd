@@ -6,6 +6,7 @@
   :license  "Specify license here"
   :version "0.0.1"
   :serial t
-  :depends-on (#:lparallel)
+  :depends-on (#:lparallel #:bordeaux-threads)
   :components ((:file "package")
+							 (:file "nb-queue")
 							 (:file "nb-cache")))
