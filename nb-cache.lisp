@@ -16,6 +16,8 @@
 
 (defparameter *queue* nil)
 
+(defvar *lock* (bt:make-lock))
+
 (defstruct nb-atomic-queue queue (first 0 :type (unsigned-byte 64)) (last 0 :type (unsigned-byte 64)) (size 0 :type (unsigned-byte 64)) (cap 0 :type  (unsigned-byte 64)))
 	
 (defun init ()
@@ -48,33 +50,27 @@
 			nil))
 
 (defun queue-grow (queue)
-	(if (eql (nb-atomic-queue-last queue) (- (nb-atomic-queue-cap queue) 1))
-			(let ((q-last (nb-atomic-queue-last queue))
-						(q-new-last 0))
-				(loop repeat 20 do
-						 (if (eq (sb-lockless::compare-and-swap (nb-atomic-queue-last queue) q-last q-new-last) q-last)
-								 (progn
-									 (sb-lockless::atomic-incf (nb-atomic-queue-size queue))
-									 (return q-new-last))
-								 (sleep 0.005))))
-			(progn
-				(sb-lockless::atomic-incf (nb-atomic-queue-size queue))
-				(sb-lockless::atomic-incf (nb-atomic-queue-last queue)))))
+	(bt:with-lock-held (*lock*)
+		(if (eql (nb-atomic-queue-last queue) (- (nb-atomic-queue-cap queue) 1))
+				(progn
+					(setf (nb-atomic-queue-last queue) 0)
+					(incf  (nb-atomic-queue-size queue))
+					0)
+				(progn
+					(incf (nb-atomic-queue-size queue))
+					(incf (nb-atomic-queue-last queue))))))
+						  
 
 (defun queue-shrink (queue)
-	(if (eql (nb-atomic-queue-first queue) (- (nb-atomic-queue-cap queue) 1))
-			(let ((q-first (nb-atomic-queue-first queue))
-						(q-new-first 0))
-				(loop repeat 20 do
-						 (if (eq (sb-lockless::compare-and-swap (nb-atomic-queue-first queue) q-first q-new-first) q-first)
-								 (progn
-									 (sb-lockless::atomic-decf (nb-atomic-queue-size queue))
-									 (return q-new-first))
-								 (sleep 0.005))))
-			(let ((first-entry (nb-atomic-queue-first queue)))
-				(sb-lockless::atomic-incf (nb-atomic-queue-first queue))
-				(sb-lockless::atomic-decf (nb-atomic-queue-size queue))
-				first-entry)))
+	(bt:with-lock-held (*lock*)
+		(if (eql (nb-atomic-queue-first queue) (- (nb-atomic-queue-cap queue) 1))
+				(progn
+					(setf (nb-atomic-queue-first queue) 0)
+					(decf  (nb-atomic-queue-size queue))
+					0)
+				(progn
+					(decf (nb-atomic-queue-size queue))
+					(incf (nb-atomic-queue-first queue))))))
 	
 (defun queue-add (queue entry)
 	(if (queue-full-p queue)
@@ -91,8 +87,6 @@
 				(let ((entry (svref (nb-atomic-queue-queue queue) (nb-atomic-queue-first queue))))
 					(queue-shrink queue)
 					entry))))
-
-
 	
 (defun update-queue (queue idx val)
 	(let* ((q (nb-atomic-queue-queue queue))
