@@ -38,30 +38,59 @@
 		 (and
 			(eql 0 fst-idx)
 			(eql (nb-atomic-queue-cap queue) (nb-atomic-queue-last queue)))
-		 (eql (nb-atomic-queue-last queue) fst-idx))))
+		 (and
+			(eql (nb-atomic-queue-last queue) fst-idx)
+			(not (eql (nb-atomic-queue-size queue) 0))))))
 	
 (defun queue-empty-p (queue)
-	(if (eql (nb-atomic-queue-first queue) (nb-atomic-queue-last queue))
+	(if (eql (nb-atomic-queue-size queue) 0)
 			t
 			nil))
 
-(defun incf-queue (queue)
+(defun queue-grow (queue)
 	(if (eql (nb-atomic-queue-last queue) (- (nb-atomic-queue-cap queue) 1))
 			(let ((q-last (nb-atomic-queue-last queue))
 						(q-new-last 0))
 				(loop repeat 20 do
 						 (if (eq (sb-lockless::compare-and-swap (nb-atomic-queue-last queue) q-last q-new-last) q-last)
-								 (return q-new-last)
+								 (progn
+									 (sb-lockless::atomic-incf (nb-atomic-queue-size queue))
+									 (return q-new-last))
 								 (sleep 0.005))))
-			(sb-lockless::atomic-incf (nb-atomic-queue-last queue))))
+			(progn
+				(sb-lockless::atomic-incf (nb-atomic-queue-size queue))
+				(sb-lockless::atomic-incf (nb-atomic-queue-last queue)))))
+
+(defun queue-shrink (queue)
+	(if (eql (nb-atomic-queue-first queue) (- (nb-atomic-queue-cap queue) 1))
+			(let ((q-first (nb-atomic-queue-first queue))
+						(q-new-first 0))
+				(loop repeat 20 do
+						 (if (eq (sb-lockless::compare-and-swap (nb-atomic-queue-first queue) q-first q-new-first) q-first)
+								 (progn
+									 (sb-lockless::atomic-decf (nb-atomic-queue-size queue))
+									 (return q-new-first))
+								 (sleep 0.005))))
+			(let ((first-entry (nb-atomic-queue-first queue)))
+				(sb-lockless::atomic-incf (nb-atomic-queue-first queue))
+				(sb-lockless::atomic-decf (nb-atomic-queue-size queue))
+				first-entry)))
 	
 (defun queue-add (queue entry)
 	(if (queue-full-p queue)
 			nil
 			(progn
 				(update-queue queue (nb-atomic-queue-last queue) entry)
-				(incf-queue queue)
+				(queue-grow queue)
 				entry)))
+
+(defun queue-remove (queue)
+	(if (queue-empty-p queue)
+			nil
+			(progn
+				(let ((entry (svref (nb-atomic-queue-queue queue) (nb-atomic-queue-first queue))))
+					(queue-shrink queue)
+					entry))))
 
 
 	
