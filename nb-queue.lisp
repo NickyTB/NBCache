@@ -9,7 +9,7 @@
 (defstruct entry id key value)
 			 
 (defun make-atomic-queue (size)
-	(make-nb-atomic-queue :queue (make-array size :element-type 'entry) :cap size))
+	(make-nb-atomic-queue :queue (make-array size) :cap size))
 
 (defun init-queue ()
 	(setf *queue* (make-atomic-queue 10)))
