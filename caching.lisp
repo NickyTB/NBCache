@@ -14,7 +14,7 @@
 
 (defparameter *central-cache* nil)
 
-(defparameter *numb-kernels* 8)
+(defparameter *numb-kernels* 10)
 
 
 (defun init ()
@@ -137,53 +137,17 @@
 									 (push-queue (format nil "CLient got ~A from cache. Client ~A" resp-data (:client-id client)) log-queue))))))))))
 
 
-(defmethod start-client1 ((client front-client) log-queue)
-	(submit-task
-	 (make-channel)
-	 (lambda ()
-		 (let* ((go-on t)
-						(local-client client)
-						(req-q (:client-req-q local-client))
-						(resp-q (:resp-q local-client))
-						(cache-queue (:cache-req-q local-client)))
-			 (loop
-					while (eql go-on t)
-					do
-						(with-locked-queue req-q
-							(when (not (queue-empty-p req-q))
-								(let ((req-data (pop-queue req-q)))
-									(cond
-										((eq req-data 'quit)
-										 (setf go-on nil)
-										 (let ((client-quit (make-instance 'client-quit :client-quit-id (:client-id client))))
-											 (push-queue (format nil "CLient quit ~A from cache req queue" client) log-queue)
-											 (push-queue client-quit cache-queue)))
-										(t
-										 (progn
-											 (push-queue (format nil "CLient req ~A from req queue" req-data) log-queue)
-											 (push-queue req-data cache-queue)))))))
-						(with-locked-queue resp-q
-							(when (not (queue-empty-p resp-q)))
-							(let ((resp-data (pop-queue resp-q)))
-								(cond
-									((eq resp-data 'quit)
-									 (setf go-on nil)
-									 (let ((client-quit (make-instance 'client-quit :client-quit-id (:client-id client))))
-										 (push-queue (format nil "CLient quit ~A from cache resp queue" client) log-queue)
-										 (push-queue client-quit cache-queue)))
-									(t 
-									 (push-queue (format nil "CLient got ~A from cache. Client: ~A " resp-data (:client-id local-client)) log-queue))))))))))
-
 (defun start-logger (log-queue)
 	(let ((standard-out *standard-output*))
 		(submit-task
 		 (make-channel)
 		 (lambda ()
-			 (labels ((rec ()
-									(let ((logg-mess (pop-queue log-queue)))
-										(format standard-out "LOG: ~A~%" logg-mess)
-										(rec))))
-				 (rec))))))
+			 (let ((*standard-output* standard-out))
+				 (labels ((rec ()
+										(let ((logg-mess (pop-queue log-queue)))
+											(format standard-out "LOG: ~A~%" logg-mess)
+											(rec))))
+					 (rec)))))))
 
 
 (defun start-logger1 (log-queue)
@@ -322,7 +286,7 @@
 						 do (setup-client (:req-q *central-cache*)))
 					(loop for cl in *clients*
 						 do (start-client cl log-queue)
-							 (format t "Client started ~A~%" cl))
+							 (format t "Client started ~A id ~A~%" cl (:client-id cl)))
 					(setf *setup-done* t)))
 			(progn
 				(loop for i from 0 below 4
@@ -339,6 +303,19 @@
 										(client (nth client-num *clients*))
 										(entry (make-instance 'update-entry :entry-key key :entry-value (* key 2) :entry-client-id (:client-id client))))
 							 (push-queue entry (:client-req-q client)))))))
+
+(defun send-get-req (key value nth-client)
+	(let ((client (nth nth-client *clients*)))
+		(push-queue (make-instance 'get-entry :entry-key key :entry-value value :entry-client-id (:client-id client)) (:client-req-q client))))
+
+(defun send-update-req (key value nth-client)
+	(let ((client (nth nth-client *clients*)))
+		(push-queue (make-instance 'update-entry :entry-key key :entry-value value :entry-client-id (:client-id client)) (:client-req-q client))))
+
+(defun send-numb-get-req (numb)
+	(loop for i from 0 below numb
+		 do
+			 (send-get-req i i (random 4))))
 	
 	
 			

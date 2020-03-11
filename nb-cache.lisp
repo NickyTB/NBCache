@@ -36,6 +36,8 @@
 
 (defparameter *numb-kernels* 8)
 
+(defparameter *log-queue* nil)
+
 
 (defun init ()
 	(progn
@@ -130,11 +132,13 @@
 										((eq req-data 'quit)
 										 (setf go-on nil)
 										 (let ((client-quit (make-instance 'client-quit :client-quit-id (:client-id client))))
-											 (queue-add log-queue (format nil "CLient quit ~A from cache req queue" client))
+											 (queue-add log-queue (format nil "CLient quit ~A from cache req queue ~A" client (local-time:now)))
 											 (queue-add cache-queue client-quit)))
+										((eq req-data 'flush)
+										 (queue-add log-queue (format nil "Resp-q ~A Req-q ~A Client ~A" (:resp-q client) (:client-req-q client) (:client-id client))))
 										(t
 										 (progn
-											 (queue-add log-queue (format nil "CLient req ~A from req queue. Client: ~A" req-data (:client-id client)))
+											 (queue-add log-queue (format nil "CLient req ~A from req queue. Client: ~A ~A" req-data (:client-id client) (local-time:now)))
 											 (queue-add cache-queue req-data))))))
 							(let ((resp-data (queue-remove resp-queue)))
 								(when resp-data
@@ -142,10 +146,10 @@
 										((eq resp-data 'quit)
 										 (setf go-on nil)
 										 (let ((client-quit (make-instance 'client-quit :client-quit-id (:client-id client))))
-											 (queue-add log-queue (format nil "CLient quit ~A from cache resp queue" client))
+											 (queue-add log-queue (format nil "CLient quit ~A from cache resp queue ~A" client (local-time:now)))
 											 (queue-add cache-queue client-quit)))
 										(t 
-										 (queue-add log-queue (format nil "CLient got ~A from cache. Client ~A" resp-data (:client-id client)))))))))))))
+										 (queue-add log-queue (format nil "CLient got ~A from cache. Client ~A ~A" resp-data (:client-id client) (local-time:now)))))))))))))
 
 
 
@@ -157,8 +161,10 @@
 				 (loop
 						while (eql go-on t)
 						do
+							(sleep 0.05)
 							(let ((logg-mess (queue-remove log-queue)))
-								(format standard-out "LOG: ~A~%" logg-mess))))))))
+								(when logg-mess
+									(format standard-out "LOG: ~A~%" logg-mess)))))))))
 
 
 (defgeneric handle-client-req (req client cache-data log-queue))
@@ -193,8 +199,38 @@
 						(db-update *db* key (:value req))
 						(queue-add (:resp-q client) (:value req))
 						(queue-add log-queue (format nil "UPDATE: Updated in db, ~A" key))))))
-					
-	
+
+(defun handle-get-entry (req client cache-data log-queue)
+	(let ((key (:key req)))
+		(multiple-value-bind (val found)
+				(gethash key cache-data)
+			(if found
+					(progn
+						(queue-add (:resp-q client) val)
+						(queue-add log-queue (format nil "Found in cache key: ~A val: ~A Client ~A" key val (:client-id client))))
+					(let ((db-val (assoc key *db* :test #'=)))
+						(if db-val
+								(progn
+									(queue-add (:resp-q client) db-val)
+									(setf (gethash key cache-data) db-val)
+									(queue-add log-queue (format nil "Key found in db, Key: ~A Val: ~A Client: ~A" key db-val (:client-id client))))
+								(error "Key not found in db ~A" key)))))))
+
+(defun handle-update-entry (req client cache-data log-queue)
+	(let ((key (:key req)))
+		(multiple-value-bind (val found)
+				(gethash key cache-data)
+			(if found
+					(progn
+						(remhash key cache-data)
+						(db-update *db* key (:value req))
+						(queue-add log-queue (format nil "UPDATE: Removed in cache ~A. Updated in db" key)))
+						(queue-add (:resp-q client) val))
+					(progn
+						(db-update *db* key (:value req))
+						(queue-add (:resp-q client) (:value req))
+						(queue-add log-queue (format nil "UPDATE: Updated in db, ~A" key))))))
+
 (defgeneric start-cache (cache log-queue))
 
 (defmethod start-cache ((cache central-cache) log-queue)
@@ -228,7 +264,11 @@
 													 (let ((client-p (get-client (:entry-client-id req-data))))											
 														 (let ((client (find-if client-p *clients*)))
 															 (if client
-																	 (handle-client-req req-data client cache-data log-queue)
+																	 (cond ((typep req-data 'get-entry)
+																					(handle-get-entry req-data client cache-data log-queue))
+																				 ((typep req-data 'update-entry)
+																					(handle-update-entry req-data client cache-data log-queue)))
+																	 ;;(handle-client-req req-data client cache-data log-queue)
 																	 (error "Client not registered. Id: ~A ~A" (:entry-client-id req-data) *clients*))))
 													 (error "No clients registered. ~A" *clients*)))
 											(t (error "Not a known request ~A~%" req-data))))))))))
@@ -241,7 +281,7 @@
 															 :resp-queue (make-atomic-queue 10)
 															 :cache-req-queue cache-queue
 															 :client-req-queue (make-atomic-queue 10))))
-		(queue-add cache-queue (:client-id client))
+		(queue-add cache-queue client)
 		(setf *clients* (cons client *clients*))
 		client))
 
@@ -255,7 +295,7 @@
 	(progn
 		(loop for client in *clients*
 			 do
-				 (push-queue 'quit (:resp-q client)))
+				 (queue-add (:resp-q client) 'quit))
 		(sleep 2)
 		(queue-add (:req-q *central-cache*) 'quit)
 		(setf *setup-done* nil)
@@ -264,17 +304,18 @@
 
 (defun test ()
 	(if (not *setup-done*)
-			(let ((log-queue (make-atomic-queue 10)))
-				(start-logger log-queue)
+			(progn
+				(setf *log-queue* (make-atomic-queue 10))
+				(start-logger *log-queue*)
 				(progn
 					(sleep 1)
 					(setup-cache)
-					(start-cache *central-cache* log-queue)
+					(start-cache *central-cache* *log-queue*)
 					(sleep 1)
 					(loop for x below 4
 						 do (setup-client (:req-q *central-cache*)))
 					(loop for cl in *clients*
-						 do (start-client cl log-queue)
+						 do (start-client cl *log-queue*)
 							 (format t "Client started ~A~%" cl))
 					(setf *setup-done* t)))
 			(progn
@@ -285,11 +326,16 @@
 										(client (nth client-num *clients*))
 										(entry (make-instance 'get-entry :entry-key key :entry-value (* key 2) :entry-client-id (:client-id client))))
 							 (queue-add (:client-req-q client) entry)))
-				(loop for i from 0 below 5
+				#|(loop for i from 0 below 5
 					 do
 						 (let* ((key (random (length *db*)))
 										(client-num (random 4))
 										(client (nth client-num *clients*))
 										(entry (make-instance 'update-entry :entry-key key :entry-value (* key 2) :entry-client-id (:client-id client))))
-							 (queue-add (:client-req-q client) entry))))))
+				(queue-add (:client-req-q client) entry)))|#)))
+
+(defun flush-clients ()
+	(loop for cl in *clients*
+		 do 
+			 (queue-add (:client-req-q cl) 'flush)))
 	
