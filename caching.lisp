@@ -108,33 +108,28 @@
 				 (loop
 						while (eql go-on t)
 						do
-							(let ((req-data (pop-queue req-queue)))
-								(cond
-									((eq req-data 'quit)
-									 (setf go-on nil)
-									 (let ((client-quit (make-instance 'client-quit :client-quit-id (:client-id client))))
-										 (push-queue (format nil "CLient quit ~A from cache req queue" client) log-queue)
-										 (push-queue client-quit cache-queue)))
-									(t
-									 (progn
-										 (push-queue (format nil "CLient req ~A from req queue. Client: ~A" req-data (:client-id client)) log-queue)
-										 (push-queue req-data cache-queue)))))))))
-		(submit-task
-		 (make-channel)
-		 (lambda ()
-			 (let ((go-on t))
-				 (loop
-						while (eql go-on t)
-						do
-							(let ((resp-data (pop-queue resp-queue)))
-								(cond
-									((eq resp-data 'quit)
-									 (setf go-on nil)
-									 (let ((client-quit (make-instance 'client-quit :client-quit-id (:client-id client))))
-										 (push-queue (format nil "CLient quit ~A from cache resp queue" client) log-queue)
-										 (push-queue client-quit cache-queue)))
-									(t 
-									 (push-queue (format nil "CLient got ~A from cache. Client ~A" resp-data (:client-id client)) log-queue))))))))))
+							(when (not (queue-empty-p req-queue))
+								(let ((req-data (pop-queue req-queue)))
+									(cond
+										((eq req-data 'quit)
+										 (setf go-on nil)
+										 (let ((client-quit (make-instance 'client-quit :client-quit-id (:client-id client))))
+											 (push-queue (format nil "CLient quit ~A from cache req queue" client) log-queue)
+											 (push-queue client-quit cache-queue)))
+										(t
+										 (progn
+											 (push-queue (format nil "CLient req ~A from req queue. Client: ~A" req-data (:client-id client)) log-queue)
+											 (push-queue req-data cache-queue))))))
+							(when (not (queue-empty-p resp-queue))
+								(let ((resp-data (pop-queue resp-queue)))
+									(cond
+										((eq resp-data 'quit)
+										 (setf go-on nil)
+										 (let ((client-quit (make-instance 'client-quit :client-quit-id (:client-id client))))
+											 (push-queue (format nil "CLient quit ~A from cache resp queue" client) log-queue)
+											 (push-queue client-quit cache-queue)))
+										(t 
+										 (push-queue (format nil "CLient got ~A from cache. Client ~A" resp-data (:client-id client)) log-queue)))))))))))
 
 
 (defun start-logger (log-queue)
@@ -316,6 +311,11 @@
 	(loop for i from 0 below numb
 		 do
 			 (send-get-req i i (random 4))))
+
+(defun send-numb-update-req (numb)
+	(loop for i from 0 below numb
+		 do
+			 (send-update-req i i (random 4))))
 	
 	
 			
