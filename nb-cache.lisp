@@ -16,10 +16,6 @@
 
 (defparameter *queue* nil)
 
-
-(defun init ()
-	(setf *db* (loop for i from 0 below 10
-								collect (cons i (* i 2)))))
 		
 
 
@@ -164,7 +160,7 @@
 							(sleep 0.05)
 							(let ((logg-mess (queue-remove log-queue)))
 								(when logg-mess
-									(format standard-out "LOG: ~A~%" logg-mess)))))))))
+									(format standard-out "NBLOG: ~A~%" logg-mess)))))))))
 
 
 (defgeneric handle-client-req (req client cache-data log-queue))

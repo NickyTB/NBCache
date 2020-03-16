@@ -31,43 +31,43 @@
 			nil))
 
 (defun queue-grow (queue)
-	(bt:with-lock-held (*lock*)
-		(if (eql (nb-atomic-queue-last queue) (- (nb-atomic-queue-cap queue) 1))
-				(progn
-					(setf (nb-atomic-queue-last queue) 0)
-					(incf  (nb-atomic-queue-size queue))
-					0)
-				(progn
-					(incf (nb-atomic-queue-size queue))
-					(incf (nb-atomic-queue-last queue))))))
+	(if (eql (nb-atomic-queue-last queue) (- (nb-atomic-queue-cap queue) 1))
+			(progn
+				(setf (nb-atomic-queue-last queue) 0)
+				(incf  (nb-atomic-queue-size queue))
+				0)
+			(progn
+				(incf (nb-atomic-queue-size queue))
+				(incf (nb-atomic-queue-last queue)))))
 						  
 
 (defun queue-shrink (queue)
-	(bt:with-lock-held (*lock*)
-		(if (eql (nb-atomic-queue-first queue) (- (nb-atomic-queue-cap queue) 1))
-				(progn
-					(setf (nb-atomic-queue-first queue) 0)
-					(decf  (nb-atomic-queue-size queue))
-					0)
-				(progn
-					(decf (nb-atomic-queue-size queue))
-					(incf (nb-atomic-queue-first queue))))))
+	(if (eql (nb-atomic-queue-first queue) (- (nb-atomic-queue-cap queue) 1))
+			(progn
+				(setf (nb-atomic-queue-first queue) 0)
+				(decf  (nb-atomic-queue-size queue))
+				0)
+			(progn
+				(decf (nb-atomic-queue-size queue))
+				(incf (nb-atomic-queue-first queue)))))
 	
 (defun queue-add (queue entry)
-	(if (queue-full-p queue)
-			nil
-			(progn
-				(update-queue queue (nb-atomic-queue-last queue) entry)
-				(queue-grow queue)
-				entry)))
+	(bt:with-lock-held (*lock*)
+		(if (queue-full-p queue)
+				nil
+				(progn
+					(update-queue queue (nb-atomic-queue-last queue) entry)
+					(queue-grow queue)
+					entry))))
 
 (defun queue-remove (queue)
-	(if (queue-empty-p queue)
-			nil
-			(progn
-				(let ((entry (svref (nb-atomic-queue-queue queue) (nb-atomic-queue-first queue))))
-					(queue-shrink queue)
-					entry))))
+	(bt:with-lock-held (*lock*)
+		(if (queue-empty-p queue)
+				nil
+				(progn
+					(let ((entry (svref (nb-atomic-queue-queue queue) (nb-atomic-queue-first queue))))
+						(queue-shrink queue)
+						entry)))))
 	
 (defun update-queue (queue idx val)
 	(let* ((q (nb-atomic-queue-queue queue))
