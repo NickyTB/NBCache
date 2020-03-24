@@ -324,4 +324,11 @@
 	(loop for i from 0 below numb
 		 do
 			 (send-update-req i i (random 4))))
+
+(defun send-mixed-numb-upd-get (upto)
+	(let ((gets (random upto))
+				(upds (random upto)))
+		(send-numb-get-req gets)
+		(send-numb-update-req upds)
+		(list gets upds)))
 	
