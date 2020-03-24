@@ -165,36 +165,6 @@
 
 (defgeneric handle-client-req (req client cache-data log-queue))
 
-(defmethod handle-client-req ((req get-entry) client cache-data log-queue)
-	(let ((key (:key req)))
-		(multiple-value-bind (val found)
-				(gethash key cache-data)
-			(if found
-					(progn
-						(queue-add (:resp-q client) val)
-						(queue-add log-queue (format nil "Found in cache key: ~A val: ~A Client ~A" key val (:client-id client))))
-					(let ((db-val (assoc key *db* :test #'=)))
-						(if db-val
-								(progn
-									(queue-add (:resp-q client) db-val)
-									(setf (gethash key cache-data) db-val)
-									(queue-add log-queue (format nil "Key found in db, Key: ~A Val: ~A Client: ~A" key db-val (:client-id client))))
-								(error "Key not found in db ~A" key)))))))
-
-(defmethod handle-client-req ((req update-entry) client cache-data log-queue)
-	(let ((key (:key req)))
-		(multiple-value-bind (val found)
-				(gethash key cache-data)
-			(if found
-					(progn
-						(remhash key cache-data)
-						(db-update *db* key (:value req))
-						(queue-add log-queue (format nil "UPDATE: Removed in cache ~A. Updated in db" key)))
-						(queue-add (:resp-q client) val))
-					(progn
-						(db-update *db* key (:value req))
-						(queue-add (:resp-q client) (:value req))
-						(queue-add log-queue (format nil "UPDATE: Updated in db, ~A" key))))))
 
 (defun handle-get-entry (req client cache-data log-queue)
 	(let ((key (:key req)))
@@ -202,14 +172,15 @@
 				(gethash key cache-data)
 			(if found
 					(progn
-						(queue-add (:resp-q client) val)
-						(queue-add log-queue (format nil "Found in cache key: ~A val: ~A Client ~A" key val (:client-id client))))
+						(queue-add (:resp-q client) (list val 'gethash)))
+						;;(queue-add log-queue (format nil "Found in cache key: ~A val: ~A Client ~A" key val (:client-id client))))
 					(let ((db-val (assoc key *db* :test #'=)))
 						(if db-val
 								(progn
-									(queue-add (:resp-q client) db-val)
+									(queue-add (:resp-q client) (list db-val 'getdb))
 									(setf (gethash key cache-data) db-val)
-									(queue-add log-queue (format nil "Key found in db, Key: ~A Val: ~A Client: ~A" key db-val (:client-id client))))
+									;;(queue-add log-queue (format nil "Key found in db, Key: ~A Val: ~A Client: ~A" key db-val (:client-id client))))
+									)
 								(error "Key not found in db ~A" key)))))))
 
 (defun handle-update-entry (req client cache-data log-queue)
@@ -220,12 +191,12 @@
 					(progn
 						(remhash key cache-data)
 						(db-update *db* key (:value req))
-						(queue-add log-queue (format nil "UPDATE: Removed in cache ~A. Updated in db" key)))
-						(queue-add (:resp-q client) val))
+						;;(queue-add log-queue (format nil "UPDHASH: Key: ~A Value: ~A Found: ~A " key val found))
+						(queue-add (:resp-q client) (list val 'updhash)))
 					(progn
 						(db-update *db* key (:value req))
-						(queue-add (:resp-q client) (:value req))
-						(queue-add log-queue (format nil "UPDATE: Updated in db, ~A" key))))))
+						(queue-add (:resp-q client) (list (:value req) 'upddb)))))))
+						;;(queue-add log-queue (format nil "UPDATE: Updated in db, ~A" key))))))
 
 (defgeneric start-cache (cache log-queue))
 
@@ -301,7 +272,7 @@
 (defun test ()
 	(if (not *setup-done*)
 			(progn
-				(setf *log-queue* (make-atomic-queue 10))
+				(setf *log-queue* (make-atomic-queue 100))
 				(start-logger *log-queue*)
 				(progn
 					(sleep 1)
@@ -322,16 +293,35 @@
 										(client (nth client-num *clients*))
 										(entry (make-instance 'get-entry :entry-key key :entry-value (* key 2) :entry-client-id (:client-id client))))
 							 (queue-add (:client-req-q client) entry)))
-				#|(loop for i from 0 below 5
+				(loop for i from 0 below 2
 					 do
 						 (let* ((key (random (length *db*)))
 										(client-num (random 4))
 										(client (nth client-num *clients*))
 										(entry (make-instance 'update-entry :entry-key key :entry-value (* key 2) :entry-client-id (:client-id client))))
-				(queue-add (:client-req-q client) entry)))|#)))
+				(queue-add (:client-req-q client) entry))))))
 
 (defun flush-clients ()
 	(loop for cl in *clients*
 		 do 
-			 (queue-add (:client-req-q cl) 'flush)))
+				(queue-add (:client-req-q cl) 'flush)))
+
+
+(defun send-get-req (key value nth-client)
+	(let ((client (nth nth-client *clients*)))
+		(queue-add (:client-req-q client) (make-instance 'get-entry :entry-key key :entry-value value :entry-client-id (:client-id client)))))
+
+(defun send-update-req (key value nth-client)
+	(let ((client (nth nth-client *clients*)))
+		(queue-add (:client-req-q client) (make-instance 'update-entry :entry-key key :entry-value value :entry-client-id (:client-id client)))))
+
+(defun send-numb-get-req (numb)
+	(loop for i from 0 below numb
+		 do
+			 (send-get-req i i (random 4))))
+
+(defun send-numb-update-req (numb)
+	(loop for i from 0 below numb
+		 do
+			 (send-update-req i i (random 4))))
 	
